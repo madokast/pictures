@@ -12,12 +12,13 @@ logging.basicConfig(
     ]
 )
 
-async def hello(req:HTTPRequest) -> HttpResponse:
-    return HttpResponse.ok_json({"user":"mdk", "time":time.time()})
+async def hello2(obj):
+    return {'hello':obj.get('name', 'default')}
 
 s = Server()
 
-s.add_router(HTTPHandle(path_prefix='/hello', method='GET', async_callback=hello))
+s.add_router(HTTPHandle.handle_json(path_prefix='/hello', method='GET', callback=lambda o:{'user':'madokast'}))
+s.add_router(HTTPHandle.handle_json(path_prefix='/hello2', method='POST', callback=hello2))
 
 s.start()
 
