@@ -1,3 +1,17 @@
+"""
+simple async http server
+
+async def hello2(obj):
+    return {'hello':obj.get('name', 'default')}
+
+s = Server()
+
+s.add_router(HTTPHandle.handle_json(path_prefix='/hello', method='GET', callback=lambda o:{'user':'madokast'}))
+s.add_router(HTTPHandle.handle_json(path_prefix='/hello2', method='POST', callback=hello2))
+
+s.start()
+"""
+
 import json
 import logging
 import asyncio
@@ -22,6 +36,9 @@ class HTTPStatus:
         return HTTPStatus(404, "NOT FOUND")
 
 class HTTPHeader:
+    """
+    use JSONContentType to create quickly
+    """
     Key_Content_Length = 'Content-Length'
     def __init__(self) -> None:
         self.kv:Dict[str, str] = dict()
@@ -46,6 +63,9 @@ class HTTPHeader:
         return HTTPHeader().content_type("text/html; charset=utf-8")
 
 class HttpResponse:
+    """
+    use ok_json to create quickly
+    """
     def __init__(self, status:HTTPStatus, header:HTTPHeader, content:bytes) -> None:
         self.status = status
         self.header = header
@@ -96,6 +116,9 @@ class HTTPRequest:
 
 
 class HTTPHandle:
+    """
+    use handle_json to create quickly
+    """
     Callback = Callable[[HTTPRequest], Coroutine[None, None, HttpResponse]]
     def __init__(self, path_prefix:str, method:Literal['GET', 'POST'], async_callback:Callback) -> None:
         self.path_prefix = path_prefix
@@ -119,15 +142,27 @@ class HTTPHandle:
     async def not_found(request:HTTPRequest) -> 'HttpResponse':
         return HttpResponse.not_found(request.to_dict())
 
-class HTTPUtils:
-    @staticmethod
-    async def read_request_header(reader:asyncio.StreamReader, timeout) -> HTTPRequest:
+class HTTPReader:
+    """
+    inner method
+    """
+    def __init__(self, reader:asyncio.StreamReader, peername:str, timeout:float, ) -> None:
+        self.peername = peername
+        self.reader = reader
+        self.timeout = timeout
 
-        async def read_header(reader:asyncio.StreamReader) -> Tuple[bytes, bytes]:
+        logger.debug("conn with %s", peername)
+
+    async def read_request_header(self) -> HTTPRequest:
+        """
+        read request line and header
+        the content may read part and should use read_request_body
+        """
+        async def read_header() -> Tuple[bytes, bytes]:
             HEADER_END = b"\r\n\r\n"
             buffer = bytes()
             while True: # read 
-                data = await asyncio.wait_for(reader.read(1024), timeout=timeout)
+                data = await asyncio.wait_for(self.reader.read(1024), timeout=self.timeout)
                 if len(data) == 0: # conn closed
                     raise HTTPRequest.Exception("connection closed")
                 buffer += data
@@ -137,13 +172,13 @@ class HTTPUtils:
                 if len(buffer) > 10240:
                     raise HTTPRequest.Error(f'request header too long! ({buffer.decode(encoding='utf-8')})')
         
-        header_content, part_content = await read_header(reader)
+        header_content, part_content = await read_header()
         method, path, protocol = None, None, None
         header = HTTPHeader()
 
         for line in header_content.decode(encoding='utf-8').split('\r\n'):
             if method is None: # first line
-                logger.debug(line)
+                logger.debug("request %s", line)
                 parts = line.split(' ')
                 if len(parts) != 3:
                     raise HTTPRequest.Error(f'bad http request line {line}')
@@ -158,12 +193,13 @@ class HTTPUtils:
         return HTTPRequest(method=method, path=path, protocol=protocol, header=header, content=part_content)
 
 
-    @staticmethod
-    async def read_request_body(reader:asyncio.StreamReader, part_request:HTTPRequest, timeout) -> HTTPRequest:
-        
-        async def read_content(reader:asyncio.StreamReader, part_content:bytes, content_length:int) -> bytes:
+    async def read_request_body(self, part_request:HTTPRequest) -> HTTPRequest:
+        """
+        read request body and combine with part_request.content
+        """
+        async def read_content(part_content:bytes, content_length:int) -> bytes:
             while len(part_content) < content_length:
-                data = await asyncio.wait_for(reader.read(1024), timeout=timeout)
+                data = await asyncio.wait_for(self.reader.read(1024), timeout=self.timeout)
                 if len(data) == 0:
                     raise HTTPRequest.Exception("connection closed")
                 part_content += data
@@ -171,26 +207,45 @@ class HTTPUtils:
         
         content_length = int(part_request.header.kv.get(HTTPHeader.Key_Content_Length, '0'))
         if content_length > 0:
-            content = await read_content(reader=reader,part_content=part_request.content, content_length=content_length)
+            content = await read_content(part_content=part_request.content, content_length=content_length)
             part_request.content = content
         
         return part_request
         
 class Router:
+    """
+    TODO optimize
+    """
     def __init__(self) -> None:
         self.handles:List[HTTPHandle] = []
         self.fall_back:HTTPHandle.Callback = HTTPHandle.not_found
+        self.postprocesses:List[Callable[[HttpResponse], None]] = []
     
     def add_router(self, handler:HTTPHandle) -> None:
         self.handles.append(handler)
+
+    def add_postprocess(self, postprocess:Callable[[HttpResponse], None]) -> None:
+        self.postprocesses.append(postprocess)
+    
+    def keep_alive(self, flag:bool) -> None:
+        self.add_postprocess(lambda res:res.header.keep_alive(flag=flag))
     
     def route(self, request:HTTPRequest) -> HTTPHandle.Callback:
+        callback:HTTPHandle.Callback = None
         for handle in self.handles:
             if handle.method == request.method:
                 if request.path.startswith(handle.path_prefix):
-                    return handle.async_callback
-        return self.fall_back
-
+                    callback = handle.async_callback
+        if callback is None:
+            callback = self.fall_back
+        
+        async def _full_callback(request:HTTPRequest) -> HttpResponse:
+            response = await callback(request)
+            for postprocess in self.postprocesses:
+                postprocess(response)
+            return response
+        
+        return _full_callback
 
 class Server:
     def __init__(self, ip = '0.0.0.0', port = 35000, timeout = 5.0, keep_alive = True) -> None:
@@ -199,20 +254,26 @@ class Server:
         self.timeout = timeout
         self.router = Router()
 
+        self.router.keep_alive(flag=keep_alive)
+
     def add_router(self, handler:HTTPHandle) -> None:
         self.router.add_router(handler)
 
     async def server_each_conn(self, reader:asyncio.StreamReader, writer:asyncio.StreamWriter):
+        peername = str(writer.get_extra_info('peername', default='unknon'))
+        http_reader = HTTPReader(reader=reader, peername=peername, timeout=self.timeout)
         try:
             while True:
-                part_request = await HTTPUtils.read_request_header(reader=reader, timeout=self.timeout)
+                part_request = await http_reader.read_request_header()
                 callback = self.router.route(part_request)
-                request = await HTTPUtils.read_request_body(reader=reader, part_request=part_request, timeout=self.timeout)
+                request = await http_reader.read_request_body(part_request=part_request)
                 response = await callback(request)
                 response.send(writer.write)
                 await asyncio.wait_for(writer.drain(), timeout=self.timeout)
+        except TimeoutError:
+            logger.debug(f"timeout with %s. closed", peername)
         except Exception as e:
-            logger.warning(str(e))
+            logger.warning(f"%s in %s, %s. closed", type(e).__name__, peername, str(e))
         finally:
             writer.close()
 
