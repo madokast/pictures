@@ -1,5 +1,6 @@
 import logging
-from http_server import Server
+import time
+from http_server import Server, HTTPHandle, HTTPRequest, HttpResponse
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -11,6 +12,12 @@ logging.basicConfig(
     ]
 )
 
+async def hello(req:HTTPRequest) -> HttpResponse:
+    return HttpResponse.ok_json({"user":"mdk", "time":time.time()})
 
-Server().start()
+s = Server()
+
+s.add_router(HTTPHandle(path_prefix='/hello', method='GET', async_callback=hello))
+
+s.start()
 
