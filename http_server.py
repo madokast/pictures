@@ -247,7 +247,7 @@ class Router:
         
         return _full_callback
 
-class Server:
+class HTTPServer:
     def __init__(self, ip = '0.0.0.0', port = 35000, timeout = 5.0, keep_alive = True) -> None:
         self.ip = ip
         self.port = port
