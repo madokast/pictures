@@ -11,7 +11,6 @@ def timeit(func):
         result = func(*args, **kwargs)
         end_time = time.time() 
         
-        # 计算执行时间
         execution_time = duration_readable(end_time - start_time)
         logger.debug(f"call {func.__name__} {execution_time}")
         

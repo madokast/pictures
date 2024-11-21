@@ -12,6 +12,7 @@ s.add_router(HTTPHandle.handle_json(path_prefix='/hello2', method='POST', callba
 s.start()
 """
 
+import os
 import json
 import logging
 import asyncio
@@ -125,6 +126,9 @@ class HTTPHandle:
         self.method = method
         self.async_callback = async_callback
     
+    def __str__(self) -> str:
+        return f"{self.method} {self.path_prefix}"
+    
     @staticmethod
     def handle_json(path_prefix:str, method:Literal['GET', 'POST'], callback:Union[Callable[[Optional[JsonObj]], JsonObj],Callable[[Optional[JsonObj]], Coroutine[None, None, JsonObj]]]) -> 'HTTPHandle':
 
@@ -136,7 +140,29 @@ class HTTPHandle:
                 res = callback(obj)
             return HttpResponse.ok_json(res)
         
-        return HTTPHandle(path_prefix=path_prefix, method=method, async_callback=_callback)  
+        return HTTPHandle(path_prefix=path_prefix, method=method, async_callback=_callback)
+    
+    mimetypes = {'html':'text/html; charset=utf-8', 
+                 'js':'application/x-javascript',
+                 'webp':'image/webp'}
+    
+    @staticmethod
+    def hangle_static_resource(dir:str = 'res', path_prefix:str='/res') -> 'HTTPHandle':
+        
+        async def _callback(request:HTTPRequest) -> 'HttpResponse':
+            path = request.path[len(path_prefix)+1:]
+            dot = path.rfind('.')
+            if dot == -1:
+                logger.warning(f'unknown static resource type {path}')
+                content_type = 'application/octet-stream'
+            else:
+                content_type = HTTPHandle.mimetypes[path[dot+1:]]
+            with open(file=os.path.join(dir, path), mode='rb') as f:
+                data = f.read()
+            header = HTTPHeader().content_type(content_type).content_length(len(data))
+            return HttpResponse(status=HTTPStatus.OK(), header=header, content=data)
+
+        return HTTPHandle(path_prefix=path_prefix, method='GET', async_callback=_callback)
     
     @staticmethod
     async def not_found(request:HTTPRequest) -> 'HttpResponse':
@@ -223,6 +249,7 @@ class Router:
     
     def add_router(self, handler:HTTPHandle) -> None:
         self.handles.append(handler)
+        logger.debug('add router %s', str(handler))
 
     def add_postprocess(self, postprocess:Callable[[HttpResponse], None]) -> None:
         self.postprocesses.append(postprocess)

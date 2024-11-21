@@ -1,11 +1,21 @@
+import os
 import webp
 from PIL import Image
 
-def save_webp(old_path:str, new_path:str) -> None:
+def convert_to_webp(old_path:str, new_path:str) -> None:
     if old_path.endswith('.gif'):
         _gif_to_webp(old_path, new_path)
     else:
         _pic_to_webp(old_path, new_path)
+
+def read_picture(path:str) -> bytes:
+    try:
+        st = os.stat(path)
+        with open(file=path, mode='rb') as f:
+            data = f.read(st.st_size)
+            return data
+    except Exception as e:
+        raise RuntimeError(f"read picture {path} error {e}")
 
 def _pic_to_webp(old_path:str, new_path:str) -> None:
     with Image.open(old_path) as img:
