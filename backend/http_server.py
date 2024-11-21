@@ -147,8 +147,13 @@ class HTTPHandle:
                  'webp':'image/webp'}
     
     @staticmethod
-    def hangle_static_resource(dir:str = 'res', path_prefix:str='/res') -> 'HTTPHandle':
-        
+    def handle_static_resource(dir:str = 'res', path_prefix:str='/res') -> 'HTTPHandle':
+        """
+        when requesting 'GET {path_prefix}/a/b/c.html', return resource at '{dir}/a/b/c.html'
+
+        dir: the root dir of all resource
+        path_prefix: the URL path prefix when requested
+        """
         async def _callback(request:HTTPRequest) -> 'HttpResponse':
             path = request.path[len(path_prefix)+1:]
             dot = path.rfind('.')
